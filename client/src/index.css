@@ -799,6 +799,30 @@ button {
   font-size: 12px;
 }
 
+.message-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.message-status {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.message-status.sent {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.message-status.delivered {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.message-status.seen {
+  color: #4ade80;
+}
+
 .composer {
   background: rgba(255, 255, 255, 0.95);
   border-top: 1px solid rgba(148, 163, 184, 0.24);

@@ -108,6 +108,31 @@ export const Chat = () => {
       }
     };
 
+    const handleMessageDelivered = ({ messageId }) => {
+      setMessages((current) =>
+        current.map((msg) => (msg._id === messageId ? { ...msg, delivered: true } : msg))
+      );
+    };
+
+    const handleSeen = ({ chatId, userId }) => {
+      // Update messages if this is the current chat or if we are the sender
+      if (chatId === selectedChat?._id) {
+        setMessages((current) =>
+          current.map((msg) => (msg.sender?._id === user._id ? { ...msg, seen: true } : msg))
+        );
+      } else if (userId === user._id) {
+        // If we are the sender and the seen event is for our messages in another chat
+        setChats((current) =>
+          current.map((chat) => {
+            if (chat._id === chatId && chat.lastMessage?.sender?._id === user._id) {
+              return { ...chat, lastMessage: { ...chat.lastMessage, seen: true } };
+            }
+            return chat;
+          })
+        );
+      }
+    };
+
     const handleGroupCreated = (chat) => {
       setChats((current) => (current.some((item) => item._id === chat._id) ? current : [chat, ...current]));
       socket.emit(SOCKET_EVENTS.JOIN_CHAT, chat._id);
@@ -130,19 +155,23 @@ export const Chat = () => {
     };
 
     socket.on(SOCKET_EVENTS.MESSAGE_RECEIVED, handleMessage);
+    socket.on(SOCKET_EVENTS.MESSAGE_DELIVERED, handleMessageDelivered);
     socket.on(SOCKET_EVENTS.GROUP_CREATED, handleGroupCreated);
     socket.on(SOCKET_EVENTS.GROUP_DELETED, handleGroupDeleted);
     socket.on(SOCKET_EVENTS.TYPING, handleTyping);
     socket.on(SOCKET_EVENTS.STOP_TYPING, handleStopTyping);
+    socket.on(SOCKET_EVENTS.SEEN, handleSeen);
 
     return () => {
       socket.off(SOCKET_EVENTS.MESSAGE_RECEIVED, handleMessage);
+      socket.off(SOCKET_EVENTS.MESSAGE_DELIVERED, handleMessageDelivered);
       socket.off(SOCKET_EVENTS.GROUP_CREATED, handleGroupCreated);
       socket.off(SOCKET_EVENTS.GROUP_DELETED, handleGroupDeleted);
       socket.off(SOCKET_EVENTS.TYPING, handleTyping);
       socket.off(SOCKET_EVENTS.STOP_TYPING, handleStopTyping);
+      socket.off(SOCKET_EVENTS.SEEN, handleSeen);
     };
-  }, [socket, selectedChat?._id]);
+  }, [socket, selectedChat?._id, user]);
 
   const openChat = async (chat) => {
     setSelectedChat(chat);

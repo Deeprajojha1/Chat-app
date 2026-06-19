@@ -20,9 +20,11 @@
  * Rooms let the server target one chat instead of broadcasting to everyone.
  */
 import { User } from "../models/User.js";
+import { Message } from "../models/Message.js";
 import { SOCKET_EVENTS } from "../events/socket.events.js";
 import { setupPlaygroundHandlers } from "./playground.handlers.js";
 
+// Map to track online users - stores Set of socket IDs for each user (supports multiple tabs)
 const onlineUsers = new Map();
 
 export const initializeSocket = (io) => {
@@ -35,7 +37,14 @@ export const initializeSocket = (io) => {
 
       socket.userId = userId;
       socket.join(userId);
-      onlineUsers.set(String(userId), socket.id);
+
+      // Store multiple socket IDs for the same user (for multiple tabs)
+      const userIdStr = String(userId);
+      if (!onlineUsers.has(userIdStr)) {
+        onlineUsers.set(userIdStr, new Set());
+      }
+      onlineUsers.get(userIdStr).add(socket.id);
+
       await User.findByIdAndUpdate(userId, { isOnline: true });
       io.emit(SOCKET_EVENTS.ONLINE_USERS, Array.from(onlineUsers.keys()));
     });
@@ -61,18 +70,31 @@ export const initializeSocket = (io) => {
       io.to(participantId).emit(SOCKET_EVENTS.GROUP_DELETED, { chatId });
     });
 
-    socket.on(SOCKET_EVENTS.PRIVATE_MESSAGE, (payload) => {
+    socket.on(SOCKET_EVENTS.PRIVATE_MESSAGE, async (payload) => {
       // For group chats, broadcast to the chat room
       // For private chats, send to the receiver's room
       const isGroupChat = payload.chat?.isGroupChat || (payload.chat?.participants && payload.chat?.participants.length > 2);
-      
+
+      // Mark message as delivered in database
+      try {
+        await Message.findByIdAndUpdate(payload.message._id, { delivered: true });
+      } catch (error) {
+        console.error("Error marking message as delivered:", error);
+      }
+
+      // Emit delivery confirmation to sender
+      socket.emit(SOCKET_EVENTS.MESSAGE_DELIVERED, {
+        messageId: payload.message._id,
+        chatId: payload.chatId,
+      });
+
       if (isGroupChat) {
         // Broadcast to all users in the chat room (excluding sender)
         socket.to(payload.chatId).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, {
           chat: payload.chat,
-          message: payload.message,
+          message: { ...payload.message, delivered: true },
         });
-        
+
         // Also emit to individual participant rooms to ensure delivery
         if (payload.chat?.participants) {
           payload.chat.participants.forEach((participant) => {
@@ -80,7 +102,7 @@ export const initializeSocket = (io) => {
             if (participantId !== String(socket.userId)) {
               socket.to(participantId).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, {
                 chat: payload.chat,
-                message: payload.message,
+                message: { ...payload.message, delivered: true },
               });
             }
           });
@@ -93,7 +115,7 @@ export const initializeSocket = (io) => {
 
         socket.to(rooms).emit(SOCKET_EVENTS.MESSAGE_RECEIVED, {
           chat: payload.chat,
-          message: payload.message,
+          message: { ...payload.message, delivered: true },
         });
       }
     });
@@ -106,16 +128,38 @@ export const initializeSocket = (io) => {
       socket.to(chatId).emit(SOCKET_EVENTS.STOP_TYPING, { chatId, user });
     });
 
-    socket.on(SOCKET_EVENTS.SEEN, ({ chatId, userId }) => {
+    socket.on(SOCKET_EVENTS.SEEN, async ({ chatId, userId }) => {
+      // Mark all unseen messages in the chat as seen
+      try {
+        await Message.updateMany(
+          { chat: chatId, sender: { $ne: userId }, seen: false },
+          { seen: true }
+        );
+      } catch (error) {
+        console.error("Error marking messages as seen:", error);
+      }
+      // Emit to the chat room so the sender gets notified
       socket.to(chatId).emit(SOCKET_EVENTS.SEEN, { chatId, userId });
+      // Also emit to the sender's user room to ensure they receive the update
+      socket.to(userId).emit(SOCKET_EVENTS.SEEN, { chatId, userId });
     });
 
     socket.on("disconnect", async () => {
       if (!socket.userId) return;
 
-      onlineUsers.delete(String(socket.userId));
-      await User.findByIdAndUpdate(socket.userId, { isOnline: false, lastSeen: new Date() });
-      io.emit(SOCKET_EVENTS.ONLINE_USERS, Array.from(onlineUsers.keys()));
+      const userIdStr = String(socket.userId);
+      const userSockets = onlineUsers.get(userIdStr);
+
+      if (userSockets) {
+        userSockets.delete(socket.id);
+
+        // Only mark user as offline if all their sockets are disconnected
+        if (userSockets.size === 0) {
+          onlineUsers.delete(userIdStr);
+          await User.findByIdAndUpdate(socket.userId, { isOnline: false, lastSeen: new Date() });
+          io.emit(SOCKET_EVENTS.ONLINE_USERS, Array.from(onlineUsers.keys()));
+        }
+      }
     });
   });
 };

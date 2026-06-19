@@ -32,6 +32,7 @@ export const SOCKET_EVENTS = {
   GROUP_DELETED: "group_deleted",
   PRIVATE_MESSAGE: "private_message",
   MESSAGE_RECEIVED: "message_received",
+  MESSAGE_DELIVERED: "message_delivered",
   TYPING: "typing",
   STOP_TYPING: "stop_typing",
   SEEN: "seen",
